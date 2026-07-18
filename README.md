@@ -1,10 +1,38 @@
+<div align="center">
+
 # AI Desktop Usage Monitor
 
-Windows에서 로컬 Codex / Claude Desktop 사용량 신호를 작게 띄워두는 데스크톱 HUD입니다.
+**Codex와 Claude Desktop 사용량을 화면 구석에서 작게 확인하는 Windows용 미니 HUD**
 
-작업 중 화면 구석에 미니 HUD를 두고 사용량만 빠르게 확인하다가, 자세한 정보가 필요하면 더블클릭해서 전체 HUD로 전환하는 방식입니다.
+작업 중에는 미니 HUD로 사용량만 빠르게 보고, 자세한 정보가 필요하면 더블클릭해서 전체 HUD로 전환하세요.
 
-Languages: [한국어](#ai-desktop-usage-monitor) | [English](#english)
+<p>
+  <a href="#실행-방법"><img alt="Windows" src="https://img.shields.io/badge/Windows-Desktop-0078D4?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="#데이터-출처"><img alt="Local first" src="https://img.shields.io/badge/LOCAL-FIRST-2DD4BF?style=for-the-badge"></a>
+  <a href="#공개보안-주의사항"><img alt="No network" src="https://img.shields.io/badge/NO_NETWORK-111827?style=for-the-badge"></a>
+  <a href="#english"><img alt="English" src="https://img.shields.io/badge/English-available-6366F1?style=for-the-badge"></a>
+</p>
+
+<p>
+  <a href="#실행-방법">실행 방법</a> ·
+  <a href="#경로-설정">경로 설정</a> ·
+  <a href="#ui-사용법">화면 보기</a> ·
+  <a href="#english">English</a>
+</p>
+
+</div>
+
+---
+
+## 화면 미리보기
+
+| 전체 HUD | 미니 HUD |
+| --- | --- |
+| ![Full HUD](docs/screenshots/full-hud-capture.png) | ![Mini HUD](docs/screenshots/mini-hud-capture.png) |
+
+| 임계치 색상 |
+| --- |
+| ![Threshold colors](docs/screenshots/threshold-colors.png) |
 
 ## 표시하는 정보
 
@@ -92,8 +120,6 @@ $env:AI_USAGE_MONITOR_PYTHON = "C:\Path\To\python.exe"
 
 ## UI 사용법
 
-![Full HUD](docs/screenshots/full-hud-capture.png)
-
 - `PIN`: 항상 위에 표시 토글
 - 투명도 슬라이더: 창을 덜 방해되게 조절
 - 새로고침 아이콘: 즉시 갱신
@@ -101,15 +127,11 @@ $env:AI_USAGE_MONITOR_PYTHON = "C:\Path\To\python.exe"
 - 미니 HUD 드래그: 위치 이동
 - 미니 HUD 더블클릭: 전체 HUD로 복귀
 
-![Mini HUD](docs/screenshots/mini-hud-capture.png)
-
 사용량 색상은 다음 기준으로 바뀝니다.
 
 - `50% 미만`: 기본 색상
 - `50% 이상`: 경고 색상
 - `90% 이상`: 위험 색상
-
-![Threshold colors](docs/screenshots/threshold-colors.png)
 
 ## 공개/보안 주의사항
 
