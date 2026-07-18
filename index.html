@@ -215,20 +215,25 @@
   .feat.crit .ic svg{stroke:var(--crit)}
 
   /* screenshots */
-  .shots{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-top:52px}
+  .shots{display:flex;gap:16px;margin-top:52px;align-items:stretch}
+  .shots .col-main{flex:1.35;display:flex}
+  .shots .col-side{flex:1;display:flex;flex-direction:column;gap:16px}
   .shot{
     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
-    padding:14px;overflow:hidden;
+    padding:16px;display:flex;flex-direction:column;flex:1;min-width:0;
   }
   .shot .cap{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.08em}
   .shot .cap i{width:6px;height:6px;border-radius:50%;background:var(--safe)}
   .shot.b .cap i{background:var(--warn)}
   .shot.c .cap i{background:var(--crit)}
-  .shot img{
-    width:100%;height:auto;border-radius:9px;display:block;
-    background:var(--bg-2);border:1px solid var(--line);
+  .shot .frame{
+    flex:1;display:grid;place-items:center;overflow:hidden;
+    background:var(--bg-2);border:1px solid var(--line);border-radius:9px;
+    padding:16px;min-height:0;
   }
-  .shot.span2{grid-column:1 / -1}
+  .shot.main .frame{min-height:360px}
+  .shot.side .frame{min-height:158px}
+  .shot img{max-width:100%;max-height:100%;width:auto;height:auto;display:block;object-fit:contain;border-radius:4px}
 
   /* data sources */
   .data-wrap{margin-top:48px;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
@@ -296,7 +301,8 @@
     .hero-grid{grid-template-columns:1fr;gap:48px}
     .hud-stage{order:-1}
     .feat-grid{grid-template-columns:repeat(2,1fr)}
-    .shots{grid-template-columns:1fr}
+    .shots{flex-direction:column}
+    .shot.main .frame{min-height:300px}
     .qs-grid{grid-template-columns:1fr;gap:32px}
   }
   @media (max-width:560px){
@@ -448,17 +454,27 @@
       <div class="sec-title" data-i18n="shot_title"></div>
       <p class="sec-sub" data-i18n="shot_sub"></p>
       <div class="shots">
-        <div class="shot span2">
-          <div class="cap"><i></i><span data-i18n="cap_full"></span></div>
-          <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/full-hud-capture.png" alt="Full HUD" />
+        <div class="col-main">
+          <div class="shot main">
+            <div class="cap"><i></i><span data-i18n="cap_full"></span></div>
+            <div class="frame">
+              <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/full-hud-capture.png" alt="Full HUD" />
+            </div>
+          </div>
         </div>
-        <div class="shot b">
-          <div class="cap"><i></i><span data-i18n="cap_mini"></span></div>
-          <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/mini-hud-capture.png" alt="Mini HUD" />
-        </div>
-        <div class="shot c">
-          <div class="cap"><i></i><span data-i18n="cap_thresh"></span></div>
-          <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/threshold-colors.png" alt="Threshold colors" />
+        <div class="col-side">
+          <div class="shot side b">
+            <div class="cap"><i></i><span data-i18n="cap_mini"></span></div>
+            <div class="frame">
+              <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/mini-hud-capture.png" alt="Mini HUD" />
+            </div>
+          </div>
+          <div class="shot side c">
+            <div class="cap"><i></i><span data-i18n="cap_thresh"></span></div>
+            <div class="frame">
+              <img loading="lazy" src="https://raw.githubusercontent.com/Taeyoung90/ai-desktop-usage-monitor/master/docs/screenshots/threshold-colors.png" alt="Threshold colors" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -602,8 +618,8 @@
       qs3:"<strong>Launch the HUD</strong> from PowerShell — Python is auto-detected for you.",
       qs4:"<strong>Pin it, shrink it, fade it.</strong> Double-click the mini strip to return to the full view.",
       code_c1:"# launch the HUD", code_c2:"# collect once, no window", code_c3:"# collect once as JSON",
-      final_title:'Stop guessing your<br><span class="grad">remaining budget.</span>',
-      final_sub:"Free, open source, and it never phones home. Drop it near a screen edge and forget about it until the color changes.",
+      final_title:'Both apps,<br><span class="grad">one glance.</span>',
+      final_sub:"No more hopping between Codex and Claude Desktop settings — your usage stays in view. Just glance over when the color changes.",
       foot_rel:"Releases", foot_by:"Built by Taeyoung90"
     },
     ko:{
@@ -649,8 +665,8 @@
       qs3:"<strong>PowerShell에서 HUD를 실행</strong>하세요. Python은 자동으로 탐색됩니다.",
       qs4:"<strong>고정하고, 줄이고, 흐리게.</strong> 미니 띠를 더블클릭하면 전체 화면으로 돌아옵니다.",
       code_c1:"# HUD 실행", code_c2:"# 창 없이 한 번만 수집", code_c3:"# JSON으로 한 번 수집",
-      final_title:'남은 사용량,<br><span class="grad">더는 짐작하지 마세요.</span>',
-      final_sub:"무료, 오픈소스, 그리고 절대 외부로 연결하지 않습니다. 화면 구석에 띄워두고 색이 바뀔 때까지 잊고 있으면 돼요.",
+      final_title:'두 앱 사용량을<br><span class="grad">한자리에.</span>',
+      final_sub:"Codex와 Claude Desktop 설정을 오가지 않아도, 사용량이 늘 눈앞에. 색이 바뀌면 그때만 신경 쓰면 됩니다.",
       foot_rel:"릴리스", foot_by:"Taeyoung90 제작"
     }
   };
