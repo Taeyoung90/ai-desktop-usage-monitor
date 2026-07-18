@@ -14,6 +14,7 @@
 </p>
 
 <p>
+  <a href="https://taeyoung90.github.io/ai-desktop-usage-monitor/">배포 페이지</a> ·
   <a href="#실행-방법">실행 방법</a> ·
   <a href="#경로-설정">경로 설정</a> ·
   <a href="#ui-사용법">화면 보기</a> ·
