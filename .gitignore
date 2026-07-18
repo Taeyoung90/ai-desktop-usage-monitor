@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+
+# Local Codex/app metadata
+.agents/
+.codex/
+
+# Windows shortcuts contain absolute local paths.
+*.lnk
+
+# Local app/provider icons copied from installed apps; do not redistribute.
+assets/chatgpt.png
+assets/claude.png
+
+# Local environment/config
+.env
+.env.*
+*.log
