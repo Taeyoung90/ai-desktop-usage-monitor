@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +17,7 @@ from typing import Any
 
 APP_TITLE = "AI Usage Monitor"
 REFRESH_MS = 30_000
+TOPMOST_ENFORCE_MS = 1_500
 STALE_HOURS = 24
 WINDOWS_APPS_DIR = Path("C:/Program Files/WindowsApps")
 APP_DIR = Path(__file__).resolve().parent
@@ -631,6 +635,355 @@ def usage_alert_color(value: float | None, default: str) -> str:
     return default
 
 
+class WindowsTrayIcon:
+    """Windows notification-area icon hosted by a dedicated hidden window."""
+
+    WM_TRAY = 0x0400 + 42
+    WM_TRAY_EXIT = 0x0400 + 43
+    WM_LBUTTONUP = 0x0202
+    WM_LBUTTONDBLCLK = 0x0203
+    WM_RBUTTONUP = 0x0205
+    WM_CONTEXTMENU = 0x007B
+    WM_NULL = 0x0000
+    WM_COMMAND = 0x0111
+    NIM_ADD = 0x00000000
+    NIM_DELETE = 0x00000002
+    NIF_MESSAGE = 0x00000001
+    NIF_ICON = 0x00000002
+    NIF_TIP = 0x00000004
+    MF_STRING = 0x00000000
+    MF_SEPARATOR = 0x00000800
+    TPM_RIGHTBUTTON = 0x00000002
+    TPM_RETURNCMD = 0x00000100
+    MENU_FULL = 1001
+    MENU_COMPACT = 1002
+    MENU_EXIT = 1003
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x00000010
+
+    def __init__(
+        self,
+        root: Any,
+        icon_path: Path,
+        tooltip: str = APP_TITLE,
+        on_show_full: Any | None = None,
+        on_show_compact: Any | None = None,
+        on_exit: Any | None = None,
+    ) -> None:
+        self.root = root
+        self.icon_path = icon_path
+        self.tooltip = tooltip[:127]
+        self.on_show_full = on_show_full
+        self.on_show_compact = on_show_compact
+        self.on_exit = on_exit
+        self.enabled = sys.platform == "win32"
+        self.added = False
+        self._commands: queue.Queue[str] = queue.Queue()
+        self._ready = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.hwnd: int | None = None
+        self.hicon: int | None = None
+        self._wndproc_ref: Any = None
+        self._nid: Any = None
+
+    def install(self) -> bool:
+        if not self.enabled:
+            return False
+        self._thread = threading.Thread(target=self._run_message_window, name="AIUsageMonitorTray", daemon=True)
+        self._thread.start()
+        return self._ready.wait(timeout=2.0) and self.added
+
+    def _run_message_window(self) -> None:
+        try:
+            from ctypes import wintypes
+
+            class WNDCLASSW(ctypes.Structure):
+                _fields_ = [
+                    ("style", wintypes.UINT),
+                    ("lpfnWndProc", ctypes.c_void_p),
+                    ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR),
+                ]
+
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+            class MSG(ctypes.Structure):
+                _fields_ = [
+                    ("hwnd", wintypes.HWND),
+                    ("message", wintypes.UINT),
+                    ("wParam", wintypes.WPARAM),
+                    ("lParam", wintypes.LPARAM),
+                    ("time", wintypes.DWORD),
+                    ("pt", POINT),
+                ]
+
+            class GUID(ctypes.Structure):
+                _fields_ = [
+                    ("Data1", wintypes.DWORD),
+                    ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD),
+                    ("Data4", ctypes.c_ubyte * 8),
+                ]
+
+            class NOTIFYICONDATAW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("hWnd", wintypes.HWND),
+                    ("uID", wintypes.UINT),
+                    ("uFlags", wintypes.UINT),
+                    ("uCallbackMessage", wintypes.UINT),
+                    ("hIcon", wintypes.HICON),
+                    ("szTip", wintypes.WCHAR * 128),
+                    ("dwState", wintypes.DWORD),
+                    ("dwStateMask", wintypes.DWORD),
+                    ("szInfo", wintypes.WCHAR * 256),
+                    ("uTimeoutOrVersion", wintypes.UINT),
+                    ("szInfoTitle", wintypes.WCHAR * 64),
+                    ("dwInfoFlags", wintypes.DWORD),
+                    ("guidItem", GUID),
+                    ("hBalloonIcon", wintypes.HICON),
+                ]
+
+            user32 = ctypes.windll.user32
+            shell32 = ctypes.windll.shell32
+            kernel32 = ctypes.windll.kernel32
+
+            kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+            user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.DefWindowProcW.restype = wintypes.LPARAM
+            user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+            user32.RegisterClassW.restype = wintypes.ATOM
+            user32.CreateWindowExW.argtypes = [
+                wintypes.DWORD,
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.HWND,
+                wintypes.HMENU,
+                wintypes.HINSTANCE,
+                ctypes.c_void_p,
+            ]
+            user32.CreateWindowExW.restype = wintypes.HWND
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+            user32.DestroyWindow.restype = wintypes.BOOL
+            user32.PostQuitMessage.argtypes = [ctypes.c_int]
+            user32.GetMessageW.argtypes = [ctypes.POINTER(MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+            user32.GetMessageW.restype = wintypes.BOOL
+            user32.TranslateMessage.argtypes = [ctypes.POINTER(MSG)]
+            user32.DispatchMessageW.argtypes = [ctypes.POINTER(MSG)]
+            user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.PostMessageW.restype = wintypes.BOOL
+            user32.GetCursorPos.argtypes = [ctypes.POINTER(POINT)]
+            user32.GetCursorPos.restype = wintypes.BOOL
+            user32.CreatePopupMenu.restype = wintypes.HMENU
+            user32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.WPARAM, wintypes.LPCWSTR]
+            user32.AppendMenuW.restype = wintypes.BOOL
+            user32.TrackPopupMenu.argtypes = [
+                wintypes.HMENU,
+                wintypes.UINT,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.HWND,
+                ctypes.c_void_p,
+            ]
+            user32.TrackPopupMenu.restype = wintypes.UINT
+            user32.DestroyMenu.argtypes = [wintypes.HMENU]
+            user32.DestroyMenu.restype = wintypes.BOOL
+            user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+            user32.SetForegroundWindow.restype = wintypes.BOOL
+            user32.LoadImageW.argtypes = [
+                wintypes.HINSTANCE,
+                wintypes.LPCWSTR,
+                wintypes.UINT,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.LoadImageW.restype = wintypes.HANDLE
+            user32.LoadIconW.restype = wintypes.HICON
+            user32.DestroyIcon.argtypes = [wintypes.HICON]
+            user32.DestroyIcon.restype = wintypes.BOOL
+            shell32.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+            shell32.Shell_NotifyIconW.restype = wintypes.BOOL
+
+            def delete_icon() -> None:
+                try:
+                    if self.added and self._nid is not None:
+                        shell32.Shell_NotifyIconW(self.NIM_DELETE, ctypes.byref(self._nid))
+                except Exception:
+                    pass
+                self.added = False
+
+            def show_menu(hwnd: Any) -> None:
+                point = POINT()
+                if not user32.GetCursorPos(ctypes.byref(point)):
+                    return
+                menu = user32.CreatePopupMenu()
+                if not menu:
+                    return
+                try:
+                    user32.AppendMenuW(menu, self.MF_STRING, self.MENU_FULL, "전체 HUD로 보기")
+                    user32.AppendMenuW(menu, self.MF_STRING, self.MENU_COMPACT, "미니 HUD로 보기")
+                    user32.AppendMenuW(menu, self.MF_SEPARATOR, 0, None)
+                    user32.AppendMenuW(menu, self.MF_STRING, self.MENU_EXIT, "종료")
+                    user32.SetForegroundWindow(hwnd)
+                    command = int(
+                        user32.TrackPopupMenu(
+                            menu,
+                            self.TPM_RIGHTBUTTON | self.TPM_RETURNCMD,
+                            int(point.x),
+                            int(point.y),
+                            0,
+                            hwnd,
+                            None,
+                        )
+                    )
+                    user32.PostMessageW(hwnd, self.WM_NULL, 0, 0)
+                finally:
+                    user32.DestroyMenu(menu)
+                if command == self.MENU_FULL:
+                    self._commands.put("full")
+                elif command == self.MENU_COMPACT:
+                    self._commands.put("compact")
+                elif command == self.MENU_EXIT:
+                    self._commands.put("exit")
+
+            def wndproc(hwnd: Any, msg: int, wparam: Any, lparam: Any) -> Any:
+                if msg == self.WM_TRAY and int(wparam) == 1:
+                    mouse_msg = int(lparam) & 0xFFFF
+                    if mouse_msg in (self.WM_LBUTTONUP, self.WM_LBUTTONDBLCLK):
+                        self._commands.put("toggle")
+                        return 0
+                    if mouse_msg in (self.WM_RBUTTONUP, self.WM_CONTEXTMENU):
+                        show_menu(hwnd)
+                        return 0
+                if msg == self.WM_CONTEXTMENU:
+                    show_menu(hwnd)
+                    return 0
+                if msg == self.WM_TRAY_EXIT:
+                    delete_icon()
+                    user32.DestroyWindow(hwnd)
+                    user32.PostQuitMessage(0)
+                    return 0
+                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+            wndproc_type = ctypes.WINFUNCTYPE(wintypes.LPARAM, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+            self._wndproc_ref = wndproc_type(wndproc)
+
+            hinstance = kernel32.GetModuleHandleW(None)
+            class_name = f"AIUsageMonitorTrayWindow{os.getpid()}"
+            wc = WNDCLASSW()
+            wc.lpfnWndProc = ctypes.cast(self._wndproc_ref, ctypes.c_void_p).value
+            wc.hInstance = hinstance
+            wc.lpszClassName = class_name
+            if not user32.RegisterClassW(ctypes.byref(wc)):
+                self._ready.set()
+                return
+
+            hwnd = user32.CreateWindowExW(0, class_name, APP_TITLE, 0, 0, 0, 0, 0, None, None, hinstance, None)
+            if not hwnd:
+                self._ready.set()
+                return
+            self.hwnd = int(hwnd)
+
+            self.hicon = int(
+                user32.LoadImageW(None, str(self.icon_path), self.IMAGE_ICON, 0, 0, self.LR_LOADFROMFILE)
+            )
+            if not self.hicon:
+                self.hicon = int(user32.LoadIconW(None, ctypes.c_void_p(32512)))
+
+            nid = NOTIFYICONDATAW()
+            nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+            nid.hWnd = hwnd
+            nid.uID = 1
+            nid.uFlags = self.NIF_MESSAGE | self.NIF_ICON | self.NIF_TIP
+            nid.uCallbackMessage = self.WM_TRAY
+            nid.hIcon = self.hicon
+            nid.szTip = self.tooltip
+            self._nid = nid
+            self.added = bool(shell32.Shell_NotifyIconW(self.NIM_ADD, ctypes.byref(nid)))
+            self._ready.set()
+
+            msg = MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+
+            delete_icon()
+            if self.hicon:
+                try:
+                    user32.DestroyIcon(self.hicon)
+                except Exception:
+                    pass
+                self.hicon = None
+        except Exception:
+            self._ready.set()
+            self.added = False
+
+    def is_visible(self) -> bool:
+        try:
+            return self.root.state() != "withdrawn" and bool(self.root.winfo_viewable())
+        except Exception:
+            return False
+
+    def show_window(self) -> None:
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            if bool(self.root.attributes("-topmost")):
+                self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+
+    def toggle_window(self) -> None:
+        try:
+            if self.is_visible():
+                self.root.withdraw()
+            else:
+                self.show_window()
+        except Exception:
+            pass
+
+    def process_commands(self) -> None:
+        while True:
+            try:
+                command = self._commands.get_nowait()
+            except queue.Empty:
+                return
+            if command == "toggle":
+                self.toggle_window()
+            elif command == "full" and self.on_show_full is not None:
+                self.on_show_full()
+            elif command == "compact" and self.on_show_compact is not None:
+                self.on_show_compact()
+            elif command == "exit" and self.on_exit is not None:
+                self.on_exit()
+
+    def remove(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            if self.hwnd:
+                ctypes.windll.user32.PostMessageW(self.hwnd, self.WM_TRAY_EXIT, 0, 0)
+        except Exception:
+            pass
+        if self._thread is not None and self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=1.0)
+
+
 def run_gui(topmost: bool = True) -> None:
     try:
         import tkinter as tk
@@ -724,6 +1077,7 @@ def run_gui(topmost: bool = True) -> None:
     footer.pack(fill="x", padx=10, pady=(0, 8))
 
     scheduled_refresh: str | None = None
+    scheduled_topmost: str | None = None
     last_usages: list[ProviderUsage] = []
 
     top_var = tk.BooleanVar(value=topmost)
@@ -734,6 +1088,44 @@ def run_gui(topmost: bool = True) -> None:
     compact_canvas = tk.Canvas(compact_frame, height=54, bg="#080b12", highlightthickness=0, cursor="hand2")
     compact_canvas.pack(fill="both", expand=True, padx=6, pady=6)
     compact_drag_start: tuple[int, int] | None = None
+
+    def force_topmost() -> None:
+        if not bool(top_var.get()):
+            return
+        try:
+            if root.state() == "withdrawn":
+                return
+        except Exception:
+            return
+        try:
+            root.attributes("-topmost", True)
+            if sys.platform == "win32":
+                hwnd = int(root.winfo_id())
+                hwnd_topmost = ctypes.c_void_p(-1)
+                flags = 0x0001 | 0x0002 | 0x0010 | 0x0040  # NOSIZE | NOMOVE | NOACTIVATE | SHOWWINDOW
+                ctypes.windll.user32.SetWindowPos(hwnd, hwnd_topmost, 0, 0, 0, 0, flags)
+            else:
+                root.lift()
+        except Exception:
+            pass
+
+    def schedule_topmost_enforcer() -> None:
+        nonlocal scheduled_topmost
+        if scheduled_topmost is not None:
+            try:
+                root.after_cancel(scheduled_topmost)
+            except Exception:
+                pass
+            scheduled_topmost = None
+        if not bool(top_var.get()):
+            return
+
+        def tick() -> None:
+            nonlocal scheduled_topmost
+            force_topmost()
+            scheduled_topmost = root.after(TOPMOST_ENFORCE_MS, tick)
+
+        scheduled_topmost = root.after(TOPMOST_ENFORCE_MS, tick)
 
     def footer_rounded_rect(
         canvas: tk.Canvas,
@@ -778,6 +1170,9 @@ def run_gui(topmost: bool = True) -> None:
         next_value = not bool(top_var.get())
         top_var.set(next_value)
         root.attributes("-topmost", next_value)
+        if next_value:
+            force_topmost()
+        schedule_topmost_enforcer()
         draw_footer()
 
     def set_opacity(value: str) -> None:
@@ -800,6 +1195,7 @@ def run_gui(topmost: bool = True) -> None:
             root.minsize(194, 54)
             root.geometry(compact_geometry)
             render_compact()
+            root.after(80, force_topmost)
         else:
             compact_frame.pack_forget()
             root.overrideredirect(False)
@@ -814,6 +1210,7 @@ def run_gui(topmost: bool = True) -> None:
                 if len(last_usages) > 1:
                     render_modern_provider(rows, last_usages[1], "#ff8a5c", "Cl")
             draw_footer()
+            root.after(80, force_topmost)
 
     footer_canvas = tk.Canvas(footer, height=28, bg="#080b12", highlightthickness=0, cursor="hand2")
     footer_canvas.pack(fill="x", expand=True)
@@ -939,11 +1336,14 @@ def run_gui(topmost: bool = True) -> None:
     def compact_release(event: Any) -> None:
         nonlocal compact_drag_start
         compact_drag_start = None
+        force_topmost()
 
     compact_canvas.bind("<Button-1>", compact_press)
     compact_canvas.bind("<Double-Button-1>", lambda event: set_compact_mode(False))
     compact_canvas.bind("<B1-Motion>", compact_drag)
     compact_canvas.bind("<ButtonRelease-1>", compact_release)
+    root.bind("<Map>", lambda event: root.after(80, force_topmost))
+    root.bind("<FocusIn>", lambda event: force_topmost())
 
     def rounded_rect(canvas: tk.Canvas, x1: int, y1: int, x2: int, y2: int, radius: int, fill: str) -> None:
         canvas.create_rectangle(x1 + radius, y1, x2 - radius, y2, fill=fill, outline=fill)
@@ -1169,8 +1569,60 @@ def run_gui(topmost: bool = True) -> None:
             scheduled_refresh = root.after(REFRESH_MS, refresh)
 
     compact_canvas.bind("<Configure>", render_compact)
+    tray_icon: WindowsTrayIcon | None = None
+
+    def close_app() -> None:
+        if scheduled_refresh is not None:
+            try:
+                root.after_cancel(scheduled_refresh)
+            except Exception:
+                pass
+        if scheduled_topmost is not None:
+            try:
+                root.after_cancel(scheduled_topmost)
+            except Exception:
+                pass
+        if tray_icon is not None:
+            tray_icon.remove()
+        root.destroy()
+
+    def show_full_from_tray() -> None:
+        root.deiconify()
+        set_compact_mode(False)
+        root.after(80, force_topmost)
+
+    def show_compact_from_tray() -> None:
+        root.deiconify()
+        set_compact_mode(True)
+        root.after(80, force_topmost)
+
+    root.protocol("WM_DELETE_WINDOW", close_app)
+    root.update_idletasks()
+    tray_icon = WindowsTrayIcon(
+        root,
+        APP_ICON_ICO if APP_ICON_ICO.exists() else titlebar_icon_path,
+        on_show_full=show_full_from_tray,
+        on_show_compact=show_compact_from_tray,
+        on_exit=close_app,
+    )
+    tray_icon.install()
+
+    def process_tray_commands() -> None:
+        if tray_icon is not None:
+            tray_icon.process_commands()
+        try:
+            root.after(120, process_tray_commands)
+        except Exception:
+            pass
+
+    process_tray_commands()
+    schedule_topmost_enforcer()
+    force_topmost()
     refresh()
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        tray_icon.remove()
 
 
 def main(argv: list[str] | None = None) -> int:
